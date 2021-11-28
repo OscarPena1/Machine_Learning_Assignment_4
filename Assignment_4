@@ -1,0 +1,377 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Nov 18 20:27:49 2021
+
+@author: 19564
+"""
+
+import gym
+from gym.envs.toy_text.frozen_lake import generate_random_map
+import re
+import numpy as np
+import matplotlib.pyplot as plt
+from hiive.mdptoolbox import mdp
+import time
+import random
+import mdptoolbox.example 
+
+random.seed(0)
+np.random.seed(0)
+ 
+#Code to transform transition matrix and reward matrix from Open AI Gym to format
+#for mdptoolbox
+#Source: Justin Flick on hiivemdptoolbox
+#Code modified from 
+#https://github.com/hiive/hiivemdptoolbox/blob/master/hiive/mdptoolbox/openai.py
+class OpenAI_MDPToolbox:
+
+    """Class to convert Discrete Open AI Gym environemnts to MDPToolBox environments. 
+    You can find the list of available gym environments here: https://gym.openai.com/envs/#classic_control
+    You'll have to look at the source code of the environments for available kwargs; as it is not well documented.  
+    """
+    
+    def __init__(self, openAI_env_name:str, render:bool=False, **kwargs):
+        """Create a new instance of the OpenAI_MDPToolbox class
+        :param openAI_env_name: Valid name of an Open AI Gym env 
+        :type openAI_env_name: str
+        :param render: whether to render the Open AI gym env
+        :type rander: boolean 
+        """
+        self.env_name = openAI_env_name
+    
+        self.env = gym.make(self.env_name, **kwargs)
+        self.env.reset()
+
+        if render:
+            self.env.render()
+        
+        self.transitions = self.env.P
+        self.actions = int(re.findall(r'\d+', str(self.env.action_space))[0])
+        self.states = int(re.findall(r'\d+', str(self.env.observation_space))[0])
+        self.P = np.zeros((self.actions, self.states, self.states))
+        self.R = np.zeros((self.states, self.actions))
+        self.convert_PR()
+        
+    def convert_PR(self):
+        """Converts the transition probabilities provided by env.P to MDPToolbox-compatible P and R arrays
+        """
+        for state in range(self.states):
+            for action in range(self.actions):
+                for i in range(len(self.transitions[state][action])):
+                    tran_prob = self.transitions[state][action][i][0]
+                    state_ = self.transitions[state][action][i][1]
+                    self.R[state][action] += tran_prob*self.transitions[state][action][i][2]
+                    self.P[action, state, state_] += tran_prob
+
+def plot(it, metric, metric_str, solution, env_str, states):
+    gamma=[".4",".5",".6",".7",".8",".9"]
+    fig = plt.figure()
+    for k in range(len(metric)):
+        iter_num=it[k]
+        metric_num=metric[k]
+        plt.plot(iter_num, metric_num)
+    if solution =="value":
+        plt.title("{} Iteration v. {} - States={}".format("Value Iteration - ",metric_str, states))
+        plt.xlabel("Iteration")
+    elif solution == 'policy':
+        plt.title("{} Iteration v. {} - states={}".format("Policy Iteration - ",metric_str, states))
+        plt.xlabel("Iteration")
+    elif solution=='Q-Learning':
+        plt.title("{} Episode v. {} - States={}".format("Q-Learning - ", metric_str, states))
+        plt.xlabel("Episode")
+    
+    plt.ylabel("{}".format(metric_str))
+    plt.legend(gamma, title="Gamma", fontsize='small')
+    fig.savefig("C:/Users/19564/Desktop/Oscar/ML\HW/HW4/Plots/{}_{}_{}_{}.png".format(env_str,solution,metric_str,states),bbox_inches='tight')
+    plt.close(fig)
+    return fig
+
+def check_if_restart_needed(old_s, action, new_s):
+    if new_s=="G" or new_s=="H":
+        return True
+    else:
+        return False
+    
+def run_graph(P_R, env_str, solution, states):
+    P=P_R[0]
+    R=P_R[1]
+    rewards_all=[]
+    max_V_all=[]
+    mean_V_all=[]
+    it_all=[]
+    time_all=[]
+    policy_all=[]
+  
+    for i in np.arange(.4,.91,.1):
+        if solution=="value":
+            vi =mdp.ValueIteration(P, R, i, max_iter=100, epsilon=.001)
+            vi.setSilent()
+            final_results= vi.run()
+        elif solution=="policy":
+            vi =mdp.PolicyIteration(P, R, i, max_iter=10)
+            vi.setSilent()
+            final_results= vi.run()
+        else:
+            if env_str=="Forest":
+                iters=3000000
+            else:
+                iters=1000000
+            vi=mdp.QLearning(P, R, gamma=i, n_iter=iters, epsilon_decay=.9, alpha_decay=.9)
+            vi.setSilent()
+            final_results=vi.run()
+            
+        policy_array=vi.policy
+    
+        rewards=[]
+        max_V=[]
+        mean_V=[]
+        it=[]
+        times=[]
+        
+        for step in final_results:
+            if solution=="value" or solution=="policy":
+                it.append(step['Iteration'])
+                times.append(step['Time'])
+                rewards.append(step['Reward'])
+                max_V.append(step['Max V'])
+                mean_V.append(step['Mean V'])
+            else:
+                if (step['Iteration'] % 100) ==0:
+                    episode=step['Iteration']/100
+                    it.append(episode)
+                    times.append(step['Time'])
+                    rewards.append(step['Reward'])
+                    max_V.append(step['Max V'])
+                    mean_V.append(step['Mean V'])
+        
+        policy_all.append(policy_array)
+        rewards_all.append(rewards)
+        max_V_all.append(max_V)
+        mean_V_all.append(mean_V)
+        it_all.append(it)
+        time_all.append(times)
+      
+        
+    del P 
+    del R
+    
+    plot_1=plot(it_all, rewards_all, 'Reward', solution, env_str, states)
+    plot_2=plot(it_all, max_V_all, 'Max_V', solution, env_str, states)
+    plot_3=plot(it_all, mean_V_all, 'Mean_V', solution, env_str, states)
+    plot_4=plot(it_all, time_all, 'Time', solution, env_str, states)
+    
+        
+    del rewards_all
+    del max_V_all
+    del mean_V_all
+    del time_all
+        
+    return plot_1, plot_2, plot_3, plot_4, policy_all                                                               
+###################################### Fozeen Lake Problem ######################################
+frozen_lake_sizes=[400, 900, 1600, 2500, 3600, 4900]
+
+#Code to create a new custom Frozen Lake Environment
+#Source: Reinforcement Learning for Fun- Website by Rodolfo Mendes
+#Code modified from #https://reinforcement-learning4.fun/2019/06/24/create-frozen-lake-random-maps/
+P_R_FL=[]
+for i in frozen_lake_sizes:
+    random_map = generate_random_map(size=int(np.sqrt(i)), p=0.8)
+    #Create a random 20x20 map of the frozen lake mdp
+    env=OpenAI_MDPToolbox("FrozenLake-v1", True, desc=random_map)
+    P=env.P
+    R=env.R
+    P_R=[P, R]
+    P_R_FL.append(P_R)
+    
+times_val_FL=[]
+all_pol_FL_Value=[]
+counter=0
+for i in frozen_lake_sizes:
+    current_map=P_R_FL[counter]
+    start_time=time.time()
+    plot_1, plot_2, plot_3, plot_4, policies=run_graph(current_map, "FrozenLake-v1", "value", i)
+    end_time=time.time()
+    final_time=end_time-start_time
+    times_val_FL.append(final_time)
+    all_pol_FL_Value.append(policies)
+    counter=counter+1
+
+times_pol_FL=[]
+all_pol_FL_Pol=[]
+counter=0
+for i in frozen_lake_sizes:
+    current_map=P_R_FL[counter]
+    start_time=time.time()
+    plot_1, plot_2, plot_3, plot_4, policies=run_graph(current_map, "FrozenLake-v1", "policy", i)
+    end_time=time.time()
+    final_time=end_time-start_time
+    times_pol_FL.append(final_time)
+    all_pol_FL_Pol.append(policies)
+    counter=counter+1
+
+
+###################################### Forest Management Problem ######################################
+forest_sizes=[3,4,5,6,7,8,9,10]
+P_R_FORESTS=[]
+for i in forest_sizes:
+    P, R = mdptoolbox.example.forest(S=i)
+    P_R_forest=[P,R]
+    P_R_FORESTS.append(P_R_forest)
+    
+times_val_Forest=[]
+all_pol_Forest_Value=[]
+counter=0
+for i in forest_sizes:
+    current_map=P_R_FORESTS[counter]
+    start_time=time.time()
+    plot_1, plot_2, plot_3, plot_4, policies=run_graph(current_map, "Forest", "value", i)
+    end_time=time.time()
+    final_time=end_time-start_time
+    times_val_Forest.append(final_time)
+    all_pol_Forest_Value.append(policies)
+    counter=counter+1
+
+print("Forest Problem - Value Iteration Runs")
+print(" ")
+for i in range(len(all_pol_Forest_Value)):
+    for j in range(len(all_pol_Forest_Value[i])):
+        new_pol=[]
+        for k in all_pol_Forest_Value[i][j]:
+            if k==0:
+                new_pol.append("Wait")
+            else:
+                new_pol.append("Cut")
+        print(new_pol)
+    print("")
+
+
+times_pol_Forest=[]
+all_pol_Forest_Pol=[]
+counter=0
+for i in forest_sizes:
+    current_map=P_R_FORESTS[counter]
+    start_time=time.time()
+    plot_1, plot_2, plot_3, plot_4, policies=run_graph(current_map, "Forest", "policy", i)
+    end_time=time.time()
+    final_time=end_time-start_time
+    times_pol_Forest.append(final_time)
+    all_pol_Forest_Pol.append(policies)
+    counter=counter+1
+
+print("Forest Problem - Policy Iteration Runs")
+print(" ")
+for i in range(len(all_pol_Forest_Pol)):
+    for j in range(len(all_pol_Forest_Pol[i])):
+        new_pol=[]
+        for k in all_pol_Forest_Pol[i][j]:
+            if k==0:
+                new_pol.append("Wait")
+            else:
+                new_pol.append("Cut")
+        print(new_pol)
+    print("")
+
+
+#Run the Q Learning Problems at the end
+times_QL_FL=[]
+all_pol_FL_Q=[]
+counter=0
+for i in frozen_lake_sizes:
+    current_map=P_R_FL[counter]
+    start_time=time.time()
+    plot_1, plot_2, plot_3, plot_4, policies=run_graph(current_map, "FrozenLake-v1", "Q-Learning", i)
+    end_time=time.time()
+    final_time=end_time-start_time
+    times_QL_FL.append(final_time)
+    all_pol_FL_Q.append(policies)
+    counter=counter+1
+
+
+times_QL_Forest=[]
+all_pol_Forest_Q=[]
+counter=0
+for i in forest_sizes:
+    current_map=P_R_FORESTS[counter]
+    start_time=time.time()
+    plot_1, plot_2, plot_3, plot_4, policies=run_graph(current_map, "Forest", "Q-Learning", i)
+    end_time=time.time()
+    final_time=end_time-start_time
+    times_QL_Forest.append(final_time)
+    all_pol_Forest_Q.append(policies)
+    counter=counter+1
+
+print("Forest Problem - Policy W-Learning Runs")
+print(" ")
+for i in range(len(all_pol_Forest_Q)):
+    for j in range(len(all_pol_Forest_Q[i])):
+        new_pol=[]
+        for k in all_pol_Forest_Q[i][j]:
+            if k==0:
+                new_pol.append("Wait")
+            else:
+                new_pol.append("Cut")
+        print(new_pol)
+    print("")
+
+#######################################Compare Policies######################################################3
+####Frozen Lake Problem
+print("Policy Comparisons-Frozen Lake - Policy Iteration v Value Iteration")
+print(" ")
+for i in range(len(all_pol_FL_Pol)):
+    for j in range(len(all_pol_FL_Pol[i])):
+        if all_pol_FL_Pol[i][j]==all_pol_FL_Value[i][j]:
+            print("Equal")
+        else:
+            print("Not Equal")
+    print("")
+    
+print("Policy Comparisons- Frozen Lake - Policy Iteration v Q-Learning")
+print(" ")
+for i in range(len(all_pol_FL_Pol)):
+    for j in range(len(all_pol_FL_Pol[i])):
+        if all_pol_FL_Pol[i][j]==all_pol_FL_Q[i][j]:
+            print("Equal")
+        else:
+            print("Not Equal")
+    print("")
+
+print("Policy Comparisons- Frozen Lake - Value Iteration v Q-Learning")
+print(" ")
+for i in range(len(all_pol_FL_Value)):
+    for j in range(len(all_pol_FL_Value[i])):
+        if all_pol_FL_Value[i][j]==all_pol_FL_Q[i][j]:
+            print("Equal")
+        else:
+            print("Not Equal")
+    print("")
+
+####Forest Problem
+print("Policy Comparisons - Forest MDP- Policy Iteration v. Value Iteration")
+print(" ")
+for i in range(len(all_pol_Forest_Pol)):
+    for j in range(len(all_pol_Forest_Pol[i])):
+        if all_pol_Forest_Pol[i][j]==all_pol_Forest_Value[i][j]:
+            print("Equal")
+        else:
+            print("Not Equal")
+    print("")
+    
+print("Policy Comparisons - Forest MDP - Q-Learning v Value Iteration")
+print(" ")
+for i in range(len(all_pol_Forest_Value)):
+    for j in range(len(all_pol_Forest_Value[i])):
+        if all_pol_Forest_Q[i][j]==all_pol_Forest_Value[i][j]:
+            print("Equal")
+        else:
+            print("Not Equal")
+    print("")
+    
+print("Policy Comparisons - Forest MDP- Policy Iteration v Q-Learning")
+print(" ")
+for i in range(len(all_pol_Forest_Pol)):
+    for j in range(len(all_pol_Forest_Pol[i])):
+        if all_pol_Forest_Pol[i][j]==all_pol_Forest_Q[i][j]:
+            print("Equal")
+        else:
+            print("Not Equal")
+    print("")
